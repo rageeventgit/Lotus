@@ -1,0 +1,33 @@
+<idea-plugin>
+    <id>dev.lotus</id>
+    <name>Lotus</name>
+    <vendor>Lotus</vendor>
+
+    <description><![CDATA[
+    IDE support for <b>Lotus</b>: Kotlin-style extension methods and string templates for Java.
+    <ul>
+      <li><code>@Extension(Player.class)</code> methods appear as real members of <code>Player</code>:
+          resolve, completion, parameter info, type inference, quick documentation and navigation all work.</li>
+      <li><code>"Hello ${player.getName()}"</code> and <code>"$name"</code> templates are highlighted, type-checked,
+          navigable, renameable and support completion.</li>
+      <li>Validation of <code>@Extension</code> classes and gutter icons linking them to their target.</li>
+    </ul>
+    Builds use the Lotus Maven plugin (delegate IDE builds to Maven).
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.java</depends>
+    <depends optional="true" config-file="lotus-maven.xml">org.jetbrains.idea.maven</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <lang.psiAugmentProvider implementation="dev.lotus.intellij.LotusAugmentProvider"/>
+        <annotator language="JAVA" implementationClass="dev.lotus.intellij.LotusAnnotator"/>
+        <psi.referenceContributor language="JAVA" implementation="dev.lotus.intellij.TemplateReferenceContributor"/>
+        <implicitUsageProvider implementation="dev.lotus.intellij.LotusImplicitUsageProvider"/>
+        <typedHandler implementation="dev.lotus.intellij.TemplateTypedHandler"/>
+        <completion.confidence language="JAVA" implementationClass="dev.lotus.intellij.TemplateCompletionConfidence" order="first"/>
+        <codeInsight.lineMarkerProvider language="JAVA" implementationClass="dev.lotus.intellij.LotusLineMarkerProvider"/>
+        <colorSettingsPage implementation="dev.lotus.intellij.LotusColorSettingsPage"/>
+        <notificationGroup id="Lotus" displayType="STICKY_BALLOON"/>
+    </extensions>
+</idea-plugin>

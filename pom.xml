@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>dev.lotus</groupId>
+    <artifactId>lotus-parent</artifactId>
+    <version>1.0.0</version>
+    <packaging>pom</packaging>
+
+    <name>Lotus</name>
+    <description>Kotlin-style extension methods and string templates for Java</description>
+    <url>https://github.com/rageeventgit/Lotus</url>
+
+    <scm>
+        <url>https://github.com/rageeventgit/Lotus</url>
+        <connection>scm:git:https://github.com/rageeventgit/Lotus.git</connection>
+    </scm>
+
+    <distributionManagement>
+        <!-- GitHub Packages. The id must match a <server> with a token (setup-java creates one in CI). -->
+        <repository>
+            <id>github</id>
+            <name>GitHub Packages</name>
+            <url>https://maven.pkg.github.com/rageeventgit/Lotus</url>
+        </repository>
+    </distributionManagement>
+
+    <modules>
+        <module>lotus-annotations</module>
+        <module>lotus-core</module>
+        <module>lotus-maven-plugin</module>
+        <module>lotus-example</module>
+    </modules>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!--
+            Everything Lotus ships targets Java 8 bytecode and APIs, so the annotations can be used and
+            the Maven plugin can run on any JDK from 8 up (and therefore in Java 8/11/17/21+ projects).
+        -->
+        <java.target>8</java.target>
+        <maven.compiler.release>${java.target}</maven.compiler.release>
+        <kotlin.version>2.4.10</kotlin.version>
+        <kotlin.compiler.jvmTarget>1.8</kotlin.compiler.jvmTarget>
+        <javaparser.version>3.28.2</javaparser.version>
+        <asm.version>9.11.1</asm.version>
+        <maven.version>3.9.9</maven.version>
+        <maven-plugin-tools.version>3.15.2</maven-plugin-tools.version>
+        <junit.version>5.14.4</junit.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.jetbrains.kotlin</groupId>
+                <artifactId>kotlin-stdlib</artifactId>
+                <version>${kotlin.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.javaparser</groupId>
+                <artifactId>javaparser-symbol-solver-core</artifactId>
+                <version>${javaparser.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.ow2.asm</groupId>
+                <artifactId>asm</artifactId>
+                <version>${asm.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter</artifactId>
+                <version>${junit.version}</version>
+                <scope>test</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.jetbrains.kotlin</groupId>
+                    <artifactId>kotlin-maven-plugin</artifactId>
+                    <version>${kotlin.version}</version>
+                    <configuration>
+                        <args>
+                            <!-- Compile against the Java 8 API, not just Java 8 bytecode. -->
+                            <arg>-Xjdk-release=1.8</arg>
+                        </args>
+                    </configuration>
+                    <executions>
+                        <execution>
+                            <id>compile</id>
+                            <goals><goal>compile</goal></goals>
+                        </execution>
+                        <execution>
+                            <id>test-compile</id>
+                            <goals><goal>test-compile</goal></goals>
+                        </execution>
+                    </executions>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.14.0</version>
+                    <configuration>
+                        <compilerArgs>
+                            <!-- Newer JDKs warn that release 8 is obsolete; targeting it is deliberate here. -->
+                            <arg>-Xlint:-options</arg>
+                        </compilerArgs>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.5.2</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-plugin-plugin</artifactId>
+                    <version>${maven-plugin-tools.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-deploy-plugin</artifactId>
+                    <version>3.1.4</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+        <plugins>
+            <!-- Sources jars, so Ctrl+Click into Lotus shows real code instead of decompiled classes. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <execution>
+                        <id>attach-sources</id>
+                        <goals><goal>jar-no-fork</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

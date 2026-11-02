@@ -1,0 +1,36 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  maven:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      - run: mvn -B verify
+
+  intellij-plugin:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: lotus-intellij
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v5
+      - run: ./gradlew test buildPlugin
+      - uses: actions/upload-artifact@v5
+        with:
+          name: lotus-intellij
+          path: lotus-intellij/build/distributions/*.zip

@@ -1,0 +1,7 @@
+<!-- Loaded only when the Maven plugin is enabled. -->
+<idea-plugin>
+    <extensions defaultExtensionNs="com.intellij">
+        <compiler.task execute="BEFORE" implementation="dev.lotus.intellij.maven.LotusBuildCheck"/>
+        <postStartupActivity implementation="dev.lotus.intellij.maven.LotusStartupCheck"/>
+    </extensions>
+</idea-plugin>

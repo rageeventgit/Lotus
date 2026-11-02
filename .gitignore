@@ -1,0 +1,9 @@
+target/
+build/
+.gradle/
+.intellijPlatform/
+.kotlin/
+.idea/
+*.iml
+out/
+lotus-icon-preview.png
