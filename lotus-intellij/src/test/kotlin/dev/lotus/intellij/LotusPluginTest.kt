@@ -201,10 +201,12 @@ class LotusPluginTest : LightJavaCodeInsightFixtureTestCase() {
     }
 
     fun `test lotus icon loads`() {
-        assertEquals(16, LotusIcons.Lotus.iconWidth)
-        assertEquals(16, LotusIcons.Lotus.iconHeight)
-        assertNotNull(javaClass.getResource("/META-INF/pluginIcon.svg"))
-        assertNotNull(javaClass.getResource("/META-INF/pluginIcon_dark.svg"))
+        // The pixel size depends on the machine's UI scale, so only check that the icon is real and square.
+        assertTrue(LotusIcons.Lotus.iconWidth > 0)
+        assertEquals(LotusIcons.Lotus.iconWidth, LotusIcons.Lotus.iconHeight)
+        for (path in listOf("/icons/lotus.svg", "/icons/lotus_dark.svg", "/META-INF/pluginIcon.svg", "/META-INF/pluginIcon_dark.svg")) {
+            assertNotNull(path, javaClass.getResource(path))
+        }
     }
 
     fun `test variables used only in templates are not unused`() {
