@@ -3,5 +3,9 @@
     <extensions defaultExtensionNs="com.intellij">
         <compiler.task execute="BEFORE" implementation="dev.lotus.intellij.maven.LotusBuildCheck"/>
         <postStartupActivity implementation="dev.lotus.intellij.maven.LotusStartupCheck"/>
+        <annotator language="XML" implementationClass="dev.lotus.intellij.maven.LotusPomAnnotator"/>
+    </extensions>
+    <extensions defaultExtensionNs="dev.lotus">
+        <buildSetup implementation="dev.lotus.intellij.maven.LotusMavenBuildSetup"/>
     </extensions>
 </idea-plugin>

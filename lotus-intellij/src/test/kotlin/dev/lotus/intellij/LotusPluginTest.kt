@@ -1,6 +1,9 @@
 package dev.lotus.intellij
 
 import com.intellij.codeInspection.deadCode.UnusedDeclarationInspection
+import com.intellij.lang.annotation.HighlightSeverity
+import com.intellij.psi.PsiFile
+import com.intellij.testFramework.ExtensionTestUtil
 import com.intellij.ide.highlighter.JavaHighlightingColors
 import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.editor.colors.TextAttributesKey
@@ -198,6 +201,20 @@ class LotusPluginTest : LightJavaCodeInsightFixtureTestCase() {
         // References still work in templates that contain escapes.
         val escapedCoins = run { var i = text.indexOf("coins", line); repeat(1) { i = text.indexOf("coins", i + 1) }; i }
         assertInstanceOf(myFixture.file.findReferenceAt(escapedCoins)?.resolve(), PsiLocalVariable::class.java)
+    }
+
+    fun `test templates warn when the build won't run Lotus`() {
+        val setup = object : LotusBuildSetup {
+            override fun problem(file: PsiFile) = LotusBuildSetup.Problem("test reason", null)
+        }
+        ExtensionTestUtil.maskExtensions(LotusBuildSetup.EP, listOf(setup), testRootDisposable)
+        myFixture.configureByText(
+            "Main.java",
+            "package game; class Main { String a(int coins) { return \"${'$'}coins coins\"; } String b() { return \"plain\"; } }",
+        )
+        val warnings = myFixture.doHighlighting(HighlightSeverity.WARNING).filter { it.description?.contains("won't be converted") == true }
+        assertEquals("This string template won't be converted: test reason", warnings.single().description)
+        assertEquals("\"${'$'}coins coins\"", myFixture.editor.document.text.substring(warnings[0].startOffset, warnings[0].endOffset))
     }
 
     fun `test lotus icon loads`() {

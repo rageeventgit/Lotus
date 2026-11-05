@@ -19,6 +19,10 @@
     <depends>com.intellij.modules.java</depends>
     <depends optional="true" config-file="lotus-maven.xml">org.jetbrains.idea.maven</depends>
 
+    <extensionPoints>
+        <extensionPoint qualifiedName="dev.lotus.buildSetup" interface="dev.lotus.intellij.LotusBuildSetup" dynamic="true"/>
+    </extensionPoints>
+
     <extensions defaultExtensionNs="com.intellij">
         <lang.psiAugmentProvider implementation="dev.lotus.intellij.LotusAugmentProvider"/>
         <annotator language="JAVA" implementationClass="dev.lotus.intellij.LotusAnnotator"/>

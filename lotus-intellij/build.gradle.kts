@@ -34,6 +34,13 @@ tasks.withType<JavaCompile>().configureEach {
     options.release = 21
 }
 
+// The plugin's own version, for writing a matching lotus-maven-plugin into a pom.xml.
+tasks.processResources {
+    val pluginVersion = project.version.toString()
+    inputs.property("pluginVersion", pluginVersion)
+    filesMatching("dev/lotus/intellij/lotus.properties") { expand("version" to pluginVersion) }
+}
+
 sourceSets {
     main {
         // The template parser is shared verbatim with the Maven transformer so both agree on syntax.

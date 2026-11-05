@@ -83,6 +83,12 @@ class LotusAnnotator : Annotator {
     private fun annotateTemplates(literal: PsiLiteralExpression, holder: AnnotationHolder) {
         val segments = LotusTemplates.segments(literal)
         if (segments.isEmpty()) return
+        LotusBuildSetup.problem(literal.containingFile)?.let { problem ->
+            holder.newAnnotation(HighlightSeverity.WARNING, "This string template won't be converted: ${problem.message}")
+                .range(literal)
+                .apply { problem.fix?.let { withFix(it) } }
+                .create()
+        }
         val base = literal.textRange.startOffset
         for (segment in segments) {
             val part = segment.part

@@ -59,6 +59,8 @@ System.out.println("$name has $health health");
   reported as errors, Ctrl+Click, Find Usages and Rename work inside templates, and completion pops up
   after `$`, `${` and `.`.
 - No false "unused" warnings for extension classes or variables only read from templates.
+- Build setup checks: a warning in `pom.xml` when `lotus-maven-plugin` is declared but never runs (e.g. `<goals>`
+  outside `<executions>`), and on every template in a module whose build won't convert it, each with a quick fix.
 - Validation of `@Extension` classes (`@This` must be first, method must be static, receiver type must fit).
 - Lotus gutter icons linking extension classes/methods to the type they extend.
 
@@ -122,7 +124,9 @@ and attaches the IntelliJ plugin zip to the release. GitHub Packages doesn't all
 1. **Get Lotus**: add the GitHub Packages repository (see [Installing from GitHub Packages](#installing-from-github-packages)),
    or run `mvn install` in this folder to put it in your local Maven repository.
 2. **Add the dependency and plugin below** to your project's `pom.xml`. Your existing compiler settings
-   (`maven.compiler.source`/`target`/`release` 8, 11, 17, …) stay as they are.
+   (`maven.compiler.source`/`target`/`release` 8, 11, 17, …) stay as they are. Keep the `<goals>` inside
+   `<executions><execution>`: Maven silently ignores goals placed directly under `<plugin>`, and Lotus then
+   never runs (templates compile as plain strings). The IntelliJ plugin flags that and fixes it in one click.
 3. **Check existing strings for `$`.** Templates are on by default, so an existing string such as
    `"${player}"` (a config placeholder) or `"$HOME"` becomes a template: it fails to compile, or, worse, if
    a variable with that name is in scope, its value is silently inserted. Either
@@ -148,7 +152,7 @@ An API or library you write can ship extensions to every project that depends on
 <dependency>
     <groupId>dev.lotus</groupId>
     <artifactId>lotus-annotations</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
     <scope>provided</scope>
 </dependency>
 ```
@@ -182,7 +186,7 @@ Notes:
     <dependency>
         <groupId>dev.lotus</groupId>
         <artifactId>lotus-annotations</artifactId>
-        <version>1.0.0</version>
+        <version>1.1.0</version>
         <scope>provided</scope>
     </dependency>
 </dependencies>
@@ -192,7 +196,7 @@ Notes:
         <plugin>
             <groupId>dev.lotus</groupId>
             <artifactId>lotus-maven-plugin</artifactId>
-            <version>1.0.0</version>
+            <version>1.1.0</version>
             <executions>
                 <execution>
                     <goals>
