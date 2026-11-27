@@ -40,6 +40,9 @@ System.out.println("$name has $health health");
 - Method references: `names.stream().map(String::shout)`.
 - A real member always wins over an extension with the same name and arity.
 - Extension libraries: `@Extension` has CLASS retention, so extensions in dependency jars are picked up too.
+- Works with Lombok: calls through Lombok-generated getters, setters (including fluent/chained ones), builders and
+  constructors resolve, so extension calls inside lambdas passed to them (`provider.killed((source, t, d) -> source.ext())`)
+  are converted too, as are lambdas passed to constructors and enum constants.
 
 **String templates**
 - `"$name"` and `"${any.java(expression)}"` in ordinary string literals.
@@ -267,3 +270,6 @@ IntelliJ treat it as a real method everywhere.
 - Bound method references to extensions (`player::isAlive`) aren't supported. Use a lambda or `Player::isAlive`.
 - Compiler errors from `javac` point at the lowered copy in `target/lotus/…` (same line numbers as your file).
 - Extensions are Java-only; Kotlin code in the same project doesn't see them.
+- Lombok support covers `@Getter`, `@Setter`, `@Data`, `@Value`, `@Accessors`, `@With`, `@Builder` and the constructor
+  annotations; settings in `lombok.config` aren't read. If Lotus can't work out a receiver's type, the build log says
+  which call it left unconverted.

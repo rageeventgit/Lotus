@@ -6,6 +6,7 @@ import com.github.javaparser.StaticJavaParser
 import com.github.javaparser.ast.CompilationUnit
 import com.github.javaparser.ast.Node
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration
+import com.github.javaparser.ast.body.EnumConstantDeclaration
 import com.github.javaparser.ast.body.EnumDeclaration
 import com.github.javaparser.ast.body.MethodDeclaration
 import com.github.javaparser.ast.body.RecordDeclaration
@@ -16,6 +17,7 @@ import com.github.javaparser.ast.expr.ClassExpr
 import com.github.javaparser.ast.expr.EnclosedExpr
 import com.github.javaparser.ast.expr.Expression
 import com.github.javaparser.ast.expr.FieldAccessExpr
+import com.github.javaparser.ast.expr.LambdaExpr
 import com.github.javaparser.ast.expr.LiteralExpr
 import com.github.javaparser.ast.expr.MethodCallExpr
 import com.github.javaparser.ast.expr.MethodReferenceExpr
@@ -30,7 +32,9 @@ import com.github.javaparser.ast.nodeTypes.NodeWithAnnotations
 import com.github.javaparser.ast.stmt.SwitchEntry
 import com.github.javaparser.printer.lexicalpreservation.LexicalPreservingPrinter
 import com.github.javaparser.resolution.declarations.ResolvedReferenceTypeDeclaration
+import com.github.javaparser.resolution.logic.FunctionalInterfaceLogic
 import com.github.javaparser.resolution.types.ResolvedReferenceType
+import com.github.javaparser.resolution.types.ResolvedType
 import com.github.javaparser.symbolsolver.JavaSymbolSolver
 import com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFactory
 import com.github.javaparser.symbolsolver.resolution.typesolvers.ClassLoaderTypeSolver
@@ -91,9 +95,19 @@ class LotusTransformer(
 
     class Result(val filesWritten: Int, val filesRewritten: Int, val extensions: List<ExtensionMethod>, val errors: List<Diagnostic>)
 
+    /** Parses at the project's language level and adds Lombok-generated members (see [LombokSupport]). */
+    private fun parserConfiguration() = ParserConfiguration()
+        .setLanguageLevel(options.languageLevel)
+        .also { it.processors.add { LombokSupport.processor } }
+
     private val typeSolver = CombinedTypeSolver().apply {
         add(ReflectionTypeSolver(false))
-        sourceRoots.filter { it.isDirectory() }.forEach { add(JavaParserTypeSolver(it)) }
+        // Declarations from other source files sometimes resolve through their own nodes (record accessors
+        // do), so those files need a symbol resolver too.
+        val solver = this
+        sourceRoots.filter { it.isDirectory() }.forEach {
+            add(JavaParserTypeSolver(it, parserConfiguration().setSymbolResolver(JavaSymbolSolver(solver))))
+        }
         classpath.filter { it.isRegularFile() && it.extension == "jar" }.forEach {
             runCatching { add(JarTypeSolver(it)) }.onFailure { e -> log.warn("Lotus: cannot index $it: ${e.message}") }
         }
@@ -103,11 +117,10 @@ class LotusTransformer(
         }
     }
 
-    private val parser = JavaParser(
-        ParserConfiguration()
-            .setLanguageLevel(options.languageLevel)
-            .setSymbolResolver(JavaSymbolSolver(typeSolver)),
-    )
+    private val parser = JavaParser(parserConfiguration().setSymbolResolver(JavaSymbolSolver(typeSolver)))
+
+    /** For the copy that gets printed: no generated members, which the lexical-preserving printer can't handle. */
+    private val plainParser = JavaParser(ParserConfiguration().setLanguageLevel(options.languageLevel))
 
     private val errors = mutableListOf<Diagnostic>()
 
@@ -161,22 +174,38 @@ class LotusTransformer(
             )
         if (!wantsTemplates && !wantsExtensions()) return null
 
-        LexicalPreservingPrinter.setup(cu)
+        // `cu` carries Lombok's generated members, which resolution needs but which have no source position,
+        // so it can't be printed lexically. Every edit is made to both `cu` and a plain parse of the same file
+        // (the "mirror"), and the mirror is printed. The generated members contain no calls, literals or method
+        // references, so both trees list those nodes in the same order.
+        val mirror = plainParser.parse(file).result.orElse(null) ?: return null
+        LexicalPreservingPrinter.setup(mirror)
         var changed = false
-        if (wantsTemplates) changed = expandTemplates(file, cu) or changed
+        if (wantsTemplates) changed = expandTemplates(file, cu, mirror) or changed
         // Checked after template expansion: `"${e.tag()}"` only becomes a call once the template is expanded.
         if (wantsExtensions()) {
-            changed = rewriteExtensionCalls(cu, registry) or changed
-            changed = rewriteMethodReferences(file, cu, registry) or changed
+            changed = rewriteExtensionCalls(file, cu, mirror, registry) or changed
+            changed = rewriteMethodReferences(file, cu, mirror, registry) or changed
         }
         if (!changed) return null
 
         return try {
-            LexicalPreservingPrinter.print(cu)
+            LexicalPreservingPrinter.print(mirror)
         } catch (e: Exception) {
             log.warn("Lotus: lexical printing failed for $file (${e.message}); falling back to pretty printing, line numbers may shift")
-            cu.toString()
+            mirror.toString()
         }
+    }
+
+    /** Nodes of [type] in [cu] matched with the same nodes in [mirror], or null (with a warning) if they don't line up. */
+    private fun <T : Node> paired(file: Path, cu: Node, mirror: Node, type: Class<T>, filter: (T) -> Boolean): List<Pair<T, T>>? {
+        val nodes = cu.findAll(type) { filter(it) }
+        val twins = mirror.findAll(type) { filter(it) }
+        if (nodes.size != twins.size) {
+            log.warn("Lotus: $file: internal mismatch while rewriting ${type.simpleName}s; skipped them")
+            return null
+        }
+        return nodes.zip(twins)
     }
 
     // ---------------------------------------------------------------- extension discovery
@@ -217,27 +246,32 @@ class LotusTransformer(
 
     // ---------------------------------------------------------------- extension call rewriting
 
-    private fun rewriteExtensionCalls(cu: CompilationUnit, registry: ExtensionRegistry): Boolean {
+    private fun rewriteExtensionCalls(file: Path, cu: CompilationUnit, mirror: CompilationUnit, registry: ExtensionRegistry): Boolean {
         var changed = false
         // Reverse pre-order visits receivers before the calls made on them, so that in
         // `a.ext1().ext2()` the inner call is rewritten first and `ext2`'s receiver type resolves.
-        val calls = cu.findAll(MethodCallExpr::class.java).filter { registry.hasName(it.nameAsString) }.asReversed()
-        for (call in calls) {
-            val extension = findExtension(call, registry) ?: continue
-            val ownerExpr = StaticJavaParser.parseExpression<Expression>(extension.owner)
-            if (extension.instance) {
-                val receiver = if (call.scope.isPresent) call.scope.get() else ThisExpr()
-                call.setScope(ownerExpr)
-                call.arguments.add(0, receiver)
-            } else {
-                call.setScope(ownerExpr)
-            }
+        val calls = paired(file, cu, mirror, MethodCallExpr::class.java) { registry.hasName(it.nameAsString) } ?: return false
+        for ((call, twin) in calls.asReversed()) {
+            val extension = findExtension(file, call, registry) ?: continue
+            lower(call, extension)
+            lower(twin, extension)
             changed = true
         }
         return changed
     }
 
-    private fun findExtension(call: MethodCallExpr, registry: ExtensionRegistry): ExtensionMethod? {
+    private fun lower(call: MethodCallExpr, extension: ExtensionMethod) {
+        val ownerExpr = StaticJavaParser.parseExpression<Expression>(extension.owner)
+        if (extension.instance) {
+            val receiver = if (call.scope.isPresent) call.scope.get() else ThisExpr()
+            call.setScope(ownerExpr)
+            call.arguments.add(0, receiver)
+        } else {
+            call.setScope(ownerExpr)
+        }
+    }
+
+    private fun findExtension(file: Path, call: MethodCallExpr, registry: ExtensionRegistry): ExtensionMethod? {
         val argc = call.arguments.size
         val instanceCandidates = registry.candidates(call.nameAsString, instance = true, argc)
         val staticCandidates = registry.candidates(call.nameAsString, instance = false, argc)
@@ -258,7 +292,7 @@ class LotusTransformer(
         }
 
         if (instanceCandidates.isNotEmpty()) {
-            val type = runCatching { scope.calculateResolvedType() }.getOrNull()
+            val type = receiverType(scope)
             if (type != null) {
                 if (!type.isReferenceType) return null
                 val ref = type.asReferenceType()
@@ -269,10 +303,19 @@ class LotusTransformer(
         }
 
         if (staticCandidates.isNotEmpty() && (scope is NameExpr || scope is FieldAccessExpr)) {
-            val decl = resolveTypeName(scope) ?: return null
-            if (hasMember(decl, call.nameAsString, argc, staticOnly = true)) return null
-            val supertypes = runCatching { decl.getAllAncestors().map { it.qualifiedName } }.getOrDefault(emptyList())
-            return registry.select(staticCandidates, decl.qualifiedName, supertypes)
+            val decl = resolveTypeName(scope)
+            if (decl != null) {
+                if (hasMember(decl, call.nameAsString, argc, staticOnly = true)) return null
+                val supertypes = runCatching { decl.getAllAncestors().map { it.qualifiedName } }.getOrDefault(emptyList())
+                return registry.select(staticCandidates, decl.qualifiedName, supertypes)
+            }
+        }
+        if (instanceCandidates.isNotEmpty()) {
+            // javac would only say "cannot find symbol" in the lowered copy; name the real cause instead.
+            log.warn(
+                "Lotus: $file:${call.line()}: can't work out the type of `$scope`, so `${call.nameAsString}(...)` " +
+                    "was left as is. If it's an extension call, javac will report it as missing.",
+            )
         }
         return null
     }
@@ -281,9 +324,10 @@ class LotusTransformer(
      * `String::shout` → `StringExtensions::shout`. An unbound reference to an instance extension
      * has exactly the shape of a reference to the static method that takes the receiver first.
      */
-    private fun rewriteMethodReferences(file: Path, cu: CompilationUnit, registry: ExtensionRegistry): Boolean {
+    private fun rewriteMethodReferences(file: Path, cu: CompilationUnit, mirror: CompilationUnit, registry: ExtensionRegistry): Boolean {
         var changed = false
-        for (ref in cu.findAll(MethodReferenceExpr::class.java)) {
+        val refs = paired(file, cu, mirror, MethodReferenceExpr::class.java) { registry.hasName(it.identifier) } ?: return false
+        for ((ref, twin) in refs) {
             val candidates = registry.named(ref.identifier)
             if (candidates.isEmpty()) continue
             val scope = ref.scope
@@ -295,7 +339,7 @@ class LotusTransformer(
             }
             if (decl == null) {
                 // Bound reference (`player::isAlive`): lowering it would need a lambda of unknown arity.
-                val type = runCatching { scope.calculateResolvedType() }.getOrNull()?.takeIf { it.isReferenceType }?.asReferenceType()
+                val type = receiverType(scope)?.takeIf { it.isReferenceType }?.asReferenceType()
                 val memberDecl = type?.typeDeclaration?.orElse(null)
                 if (type != null && memberDecl != null && memberDecl.allMethods.none { it.name == ref.identifier } &&
                     registry.select(candidates, type.qualifiedName, ancestors(type)) != null
@@ -308,6 +352,7 @@ class LotusTransformer(
             val supertypes = runCatching { decl.getAllAncestors().map { it.qualifiedName } }.getOrDefault(emptyList())
             val extension = registry.select(candidates, decl.qualifiedName, supertypes) ?: continue
             ref.setScope(TypeExpr(StaticJavaParser.parseClassOrInterfaceType(extension.owner)))
+            twin.setScope(TypeExpr(StaticJavaParser.parseClassOrInterfaceType(extension.owner)))
             changed = true
         }
         return changed
@@ -324,6 +369,56 @@ class LotusTransformer(
         if (viaContext != null) return viaContext
         val direct = runCatching { typeSolver.tryToSolveType(name) }.getOrNull()
         return if (direct != null && direct.isSolved) direct.correspondingDeclaration else null
+    }
+
+    /** The type of a call's receiver, including implicitly typed lambda parameters JavaParser can't infer itself. */
+    private fun receiverType(scope: Expression): ResolvedType? {
+        val type = runCatching { scope.calculateResolvedType() }.getOrNull() ?: lambdaParameterType(scope)
+        return type?.let(::unwrap)
+    }
+
+    /** Lambda parameters come back as `? super Player`-style constraints or wildcards; the receiver has the bound. */
+    private fun unwrap(type: ResolvedType): ResolvedType? = when {
+        type.isConstraint -> unwrap(type.asConstraintType().bound)
+        type.isWildcard -> type.asWildcard().takeIf { it.isBounded }?.boundedType?.let(::unwrap)
+        else -> type
+    }
+
+    /**
+     * JavaParser can't type the parameters of a lambda passed to a constructor or an enum constant
+     * (`new Holder(p -> ...)`, `RANSOM(p -> ...)`). Takes them from the constructor parameter's functional interface.
+     */
+    private fun lambdaParameterType(scope: Expression): ResolvedType? {
+        val name = (scope as? NameExpr)?.nameAsString ?: return null
+        val lambda = generateSequence(scope.parentNode.orElse(null)) { it.parentNode.orElse(null) }
+            .filterIsInstance<LambdaExpr>()
+            .firstOrNull { l -> l.parameters.any { it.nameAsString == name } } ?: return null
+        val index = lambda.parameters.indexOfFirst { it.nameAsString == name }
+        if (!lambda.parameters[index].type.isUnknownType) return null
+
+        val target: ResolvedType = runCatching {
+            when (val parent = lambda.parentNode.orElse(null)) {
+                is ObjectCreationExpr -> {
+                    val position = parent.arguments.indexOf(lambda)
+                    val constructor = runCatching { parent.resolve() }.getOrNull()
+                        ?: parent.type.resolve().asReferenceType().typeDeclaration.orElse(null)
+                            ?.constructors?.singleOrNull { it.numberOfParams == parent.arguments.size }
+                    constructor?.getParam(position)?.type
+                }
+                is EnumConstantDeclaration -> {
+                    val position = parent.arguments.indexOf(lambda)
+                    val enum = parent.parentNode.orElse(null) as? EnumDeclaration
+                    enum?.resolve()?.constructors?.singleOrNull { it.numberOfParams == parent.arguments.size }?.getParam(position)?.type
+                }
+                else -> null
+            }
+        }.getOrNull() ?: return null
+
+        val method = FunctionalInterfaceLogic.getFunctionalMethod(target).orElse(null) ?: return null
+        if (index >= method.noParams) return null
+        val parameter = method.getParamType(index)
+        // `Consumer<Player>.accept(T)`: put the interface's type arguments in.
+        return if (target.isReferenceType) target.asReferenceType().useThisTypeParametersOnTheGivenType(parameter) else parameter
     }
 
     private fun ancestors(type: ResolvedReferenceType): List<String> =
@@ -354,14 +449,22 @@ class LotusTransformer(
 
     // ---------------------------------------------------------------- string templates
 
-    private fun expandTemplates(file: Path, root: Node): Boolean {
+    /** Expands the templates under [root], and the same ones under [mirror] when given. */
+    private fun expandTemplates(file: Path, root: Node, mirror: Node?): Boolean {
+        val hasTemplates = { literal: StringLiteralExpr -> TemplateParser.hasTemplates(literal.value) }
+        val literals: List<Pair<StringLiteralExpr, StringLiteralExpr?>> = if (mirror != null) {
+            paired(file, root, mirror, StringLiteralExpr::class.java, hasTemplates) ?: return false
+        } else {
+            root.findAll(StringLiteralExpr::class.java) { hasTemplates(it) }.map { it to null }
+        }
         var changed = false
-        for (literal in root.findAll(StringLiteralExpr::class.java)) {
-            if (!TemplateParser.hasTemplates(literal.value) || !templatesAllowed(literal)) continue
+        for ((literal, twin) in literals) {
+            if (!templatesAllowed(literal)) continue
             val replacement = buildTemplate(file, literal) ?: continue
             literal.replace(replacement)
             // Template expressions can themselves contain templated strings.
-            expandTemplates(file, replacement)
+            expandTemplates(file, replacement, null)
+            twin?.replace(replacement.clone())
             changed = true
         }
         return changed
